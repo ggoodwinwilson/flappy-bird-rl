@@ -11,12 +11,12 @@ model_recent_path = "saved_models/ppo_flappy_bird_recent.pth"
 model_best_path = "saved_models/ppo_flappy_bird_best.pth"
 tensorboard_log_dir = "runs/ppo_experiment_hparams2"
 
-run_mode = "train"  # "train" or "test"
+run_mode = "test"  # "train" or "test"
 
 if __name__ == '__main__':
     
-    # env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=True)
-    env = gym.make("FlappyBird-v0", use_lidar=True)
+    env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=True)
+    # env = gym.make("FlappyBird-v0", use_lidar=True)
     agent = Agent(config)
     try:
         agent.load_models(model_best_path, config)
