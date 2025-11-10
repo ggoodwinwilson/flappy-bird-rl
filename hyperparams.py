@@ -25,3 +25,16 @@ class PPOConfig:
         return self.__dict__
     
 config = PPOConfig()
+
+@dataclass(frozen=True)
+class TransformerConfig:
+    d_model: int = 128
+    n_heads: int = 8
+    num_layers: int = 4
+    mlp_dim: int = d_model * 4
+    dropout_rate: float = 0.1
+    seq_len: int = 10
+    d_in: int = 180
+    d_out: int = 2
+
+transformer_config = TransformerConfig()
