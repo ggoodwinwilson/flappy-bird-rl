@@ -35,6 +35,7 @@ class TransformerConfig:
     dropout_rate: float = 0.1
     seq_len: int = 10
     d_in: int = 180
-    d_out: int = 2
+    d_out_policy: int = 2
+    d_out_value: int = 1
 
 transformer_config = TransformerConfig()
