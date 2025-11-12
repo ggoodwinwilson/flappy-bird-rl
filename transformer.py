@@ -9,9 +9,14 @@ class InputEmbedding(nn.Module):
     def __init__(self, config:TransformerConfig):
         super().__init__()
         self.config = config
+
+        self.norm = nn.LayerNorm(self.config.d_in)
         self.linear = nn.Linear(self.config.d_in, self.config.d_model)
-        
+
     def forward(self, x):
+
+        # Normalize input features
+        x = self.norm(x)
 
         # Multiply by sqrt(d_model) to keep post-embedding variance stable
         return self.linear(x) * math.sqrt(self.config.d_model)
@@ -40,57 +45,63 @@ class CosineEncode(nn.Module):
         # Compute cos on odd columns only
         self.pe[:, 1::2] = torch.cos(self.angles)
 
+        self.register_buffer('pe', self.pe, persistent=False)
+
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
         x = x + self.pe.to(x.device)
         return x
 
+
 class Attention(nn.Module):
     def __init__(self, config:TransformerConfig):
         super().__init__()
 
+        self.config = config
+
         # ensure d_model is divisible by n_heads
-        assert config.d_model % config.n_heads == 0
+        assert self.config.d_model % self.config.n_heads == 0
         
-        self.norm = nn.LayerNorm(config.d_model)
-        self.w_q = nn.Parameter(torch.empty(config.n_heads, config.d_model, config.d_model // config.n_heads))
-        self.w_k = nn.Parameter(torch.empty(config.n_heads, config.d_model, config.d_model // config.n_heads))
-        self.w_v = nn.Parameter(torch.empty(config.n_heads, config.d_model, config.d_model // config.n_heads))
-        
+        self.norm = nn.LayerNorm(self.config.d_model)
+        self.w_q = nn.Linear(self.config.d_model, self.config.d_model, bias=False)
+        self.w_k = nn.Linear(self.config.d_model, self.config.d_model, bias=False)
+        self.w_v = nn.Linear(self.config.d_model, self.config.d_model, bias=False)
+
         # Output projection layer
-        self.w_o = nn.Linear(config.d_model, config.d_model)
-
-        nn.init.xavier_uniform_(self.w_q)
-        nn.init.xavier_uniform_(self.w_k)
-        nn.init.xavier_uniform_(self.w_v)
-
+        self.w_o = nn.Linear(self.config.d_model, self.config.d_model)
 
     def forward(self, x):
         
         residual = x
         x = self.norm(x)
 
-        # b	batch (number of examples per batch)
-        # s = k = v, sequence length (number of tokens or timesteps)
-        # i	input dimension	(embedding size per token)
-        # h	number of attention heads (heads in multi-head attention)
-        # d	per-head dimension (dimension per head = total_dim / num_heads)
+        # B: batch (number of examples per batch)
+        # S: sequence length (number of tokens or timesteps)
+        # D: model dimension (embedding size per token)
+        # H: number of attention heads (heads in multi-head attention)
+        # D // H: per-head dimension (dimension per head = d_model / num_heads)
 
-        q = torch.einsum('bsi,hid->bhsd', x, self.w_q) # Queries
-        k = torch.einsum('bsi,hid->bhsd', x, self.w_k) # Keys
-        v = torch.einsum('bsi,hid->bhsd', x, self.w_v) # Values
+        B, S, D = x.size()
+        H = self.config.n_heads
+
+        # Multiply input by q/k/v weights and reshape the input into multiple heads
+        # Transpose so that head dim comes before sequence dim (computation convenience)
+        q = self.w_q(x).view(B, S, H, D // H).transpose(1,2) # Queries
+        k = self.w_k(x).view(B, S, H, D // H).transpose(1,2) # Keys
+        v = self.w_v(x).view(B, S, H, D // H).transpose(1,2) # Values
 
         # sqrt is done to prevent large values from dominating the normalization
-        atn_matrix = torch.einsum('bhsd,bhkd->bhsk', q, k) / math.sqrt(k.size(-1))
+        atn_matrix = torch.matmul(q, k.transpose(-1,-2)) / math.sqrt(D // H) # b h s s
         atn_weights = torch.softmax(atn_matrix, dim=-1)
-        out = torch.einsum('bhsk,bhkd->bhsd',atn_weights, v)
+        out = torch.matmul(atn_weights, v) # b h s d//h
 
-        # Important line - stacks the heads back together continuously in memory
-        atn_output = out.transpose(1,2).contiguous().view(x.size(0), x.size(1), -1)
+        # Stacks the heads back together continuously in memory
+        atn_output = out.transpose(1,2).contiguous().view(B, S, D)
         atn_output = self.w_o(atn_output)
 
         # add atn_output to the original input (residual connection)
         return atn_output + residual
+
 
 class MLP(nn.Module):
     def __init__(self, config:TransformerConfig):
@@ -123,6 +134,7 @@ class TransformerBlock(nn.Module):
         x = self.attention(x)
         x = self.mlp(x)
         return x
+
 
 class Transformer(nn.Module):
     def __init__(self, config:TransformerConfig):
