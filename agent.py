@@ -2,7 +2,9 @@ from torch import nn, optim
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
-from hyperparams import PPOConfig
+from configuration import PPOConfig
+from transformer import Transformer
+from mlp import MLP
 
 class PPOMemory:
     def __init__(self, batch_size):
@@ -33,52 +35,26 @@ class PPOMemory:
         del self.vals[:]
         del self.rewards[:]
         del self.dones[:]
-
-class ActorNetwork(nn.Module):
-    def __init__(self, d_in, d_out, d_hidden):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(d_in, d_hidden),
-            nn.ReLU(),
-            nn.Linear(d_hidden, d_out)
-        )
-
-    def forward(self, observation):
-        logits = self.net(observation)
-        output_dist = torch.distributions.Categorical(logits=logits)
-        return output_dist 
-    
-class CriticNetwork(nn.Module):
-    def __init__(self, d_in, d_out, d_hidden):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(d_in, d_hidden),
-            nn.ReLU(),
-            nn.Linear(d_hidden, d_out)
-        )
-        
-    def forward(self, observation):
-        return self.net(observation)
     
 class Agent:
-    def __init__(self, config: PPOConfig):
+    def __init__(self, ppo_config: PPOConfig, model_config):
+        self.ppo_config = ppo_config
+        self.model_config = model_config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.actor = ActorNetwork(d_in=config.d_in, d_hidden=config.d_hidden_actor, 
-                                  d_out=config.d_out_actor).to(self.device)
-        self.critic = CriticNetwork(d_in=config.d_in, d_hidden=config.d_hidden_critic, 
-                                    d_out=config.d_out_critic).to(self.device)
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=config.learning_rate)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=config.learning_rate)
+        if self.model_config.model_type == "transformer":
+            self.model = Transformer(config=self.model_config).to(self.device)
+        else:
+            self.model = MLP(config=self.model_config).to(self.device)
         self.max_avg_rew = float('-inf')
-        self.batch_size = config.batch_size
-        self.rollout_len = config.rollout_len
-        self.num_epochs = config.num_epochs
-        self.gamma = config.gamma
-        self.td_lambda = config.td_lambda
-        self.eps_clip = config.eps_clip
-        self.dtype = config.dtype
-        self.ent_coef = config.ent_coef
-        self.critic_coef = config.critic_coef
+        self.batch_size = self.model_config.batch_size
+        self.num_epochs = self.model_config.num_epochs
+        self.dtype = self.model_config.dtype
+        self.rollout_len = self.ppo_config.rollout_len
+        self.gamma = self.ppo_config.gamma
+        self.td_lambda = self.ppo_config.td_lambda
+        self.eps_clip = self.ppo_config.eps_clip
+        self.ent_coef = self.ppo_config.ent_coef
+        self.critic_coef = self.ppo_config.critic_coef
 
     def learn(self, memory:PPOMemory, writer:SummaryWriter, traj_step):
         
@@ -86,7 +62,7 @@ class Agent:
         dones = torch.as_tensor(memory.dones, device=self.device, dtype=self.dtype)
         old_log_probs = torch.as_tensor(memory.log_probs, device=self.device, dtype=self.dtype)
         values = torch.as_tensor(memory.vals, device=self.device, dtype=self.dtype)
-        observations = torch.stack(memory.obs, dim=0).to(self.device)
+        observations = torch.stack([torch.stack(obs, dim=0) for obs in memory.obs], dim=0).to(self.device)
         actions = torch.as_tensor(memory.actions, device=self.device, dtype=torch.int64)
 
         delta = torch.zeros(self.rollout_len, device=self.device, dtype=self.dtype)
@@ -130,10 +106,11 @@ class Agent:
                 adv_norm_batch = advantage_norm[batch_indices]
                 rtg_batch = rtg[batch_indices]
 
-                # Sample a new action from the current policy
-                new_action_dist = self.actor.forward(obs_batch)
+                # Sample a new actions and values from the current policy
+                new_action_dist, new_value_batch = self.forward(obs_batch)
                 new_log_prob_batch = new_action_dist.log_prob(old_act_batch)
                 entropy = new_action_dist.entropy().mean()
+                new_value_batch = new_value_batch.squeeze(-1)
 
                 # Compute actor loss function
                 ratio = torch.exp(new_log_prob_batch - old_log_prob_batch)
@@ -143,44 +120,42 @@ class Agent:
                 actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
 
                 # Compute critic loss function
-                new_value_batch = self.critic.forward(obs_batch).squeeze(-1)
                 critic_loss = nn.MSELoss()(new_value_batch, rtg_batch)
 
                 # Backprop total loss
                 total_loss = actor_loss + self.critic_coef * critic_loss
-                self.actor_optimizer.zero_grad()
-                self.critic_optimizer.zero_grad()
-                
-                # Gradient clipping for stability
+                self.model.optim_zero_grad()
                 total_loss.backward()
+                # Gradient clipping for stability
                 torch.nn.utils.clip_grad_norm_(
-                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    list(self.model.parameters()),
                     max_norm=0.5
                 )
-                self.actor_optimizer.step()
-                self.critic_optimizer.step()
+                self.model.optim_step()
 
-                step = epoch * (self.rollout_len//self.batch_size) + batch_num
-                writer.add_scalar("Loss/policy", actor_loss.item(), traj_step*step)
-                writer.add_scalar("Loss/value", critic_loss.item(), traj_step*step)
-                writer.add_scalar("Loss/total", total_loss.item(), traj_step*step)
+                # step = epoch * (self.rollout_len//self.batch_size) + batch_num
 
-    def save_models(self, path, config, max_avg_rew):
+    def forward(self, x:list):
+        
+        x = x.to(self.device)
+
+        if self.model_config.model_type == "transformer":
+            return self.model.forward(x)
+        else:
+            return self.model.forward(x[-1].to(self.device))
+
+    def save_models(self, path, max_avg_rew):
         torch.save({
-            "actor": self.actor.state_dict(),
-            "critic": self.critic.state_dict(),
-            "actor_opt": self.actor_optimizer.state_dict(),
-            "critic_opt": self.critic_optimizer.state_dict(),
-            "config": config.as_dict(),
+            "model": self.model.state_dict(),
+            "ppo_config": self.ppo_config.as_dict(),
+            "model_config": self.model_config.as_dict(),
             "max_avg_rew": max_avg_rew
         }, path)
 
-    def load_models(self, path, config) -> float:
+    def load_models(self, path) -> float:
         bundle = torch.load(path, map_location=self.device)
-        if bundle["config"] != config.as_dict():
+        if bundle["ppo_config"] != self.ppo_config.as_dict() or \
+            bundle["model_config"] != self.model_config.as_dict():
             raise ValueError("Checkpoint config mismatch")
-        self.actor.load_state_dict(bundle["actor"])
-        self.critic.load_state_dict(bundle["critic"])
-        self.actor_optimizer.load_state_dict(bundle["actor_opt"])
-        self.critic_optimizer.load_state_dict(bundle["critic_opt"])
+        self.model.load_state_dict(bundle["model"])
         self.max_avg_rew = bundle.get("max_avg_rew", float('-inf'))

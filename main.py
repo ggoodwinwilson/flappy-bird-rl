@@ -5,28 +5,35 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import flappy_bird_gymnasium
 from collections import deque
-from hyperparams import config
+from configuration import ppo_config, mlp_config, transformer_config
 
 model_recent_path = "saved_models/ppo_flappy_bird_recent.pth"
 model_best_path = "saved_models/ppo_flappy_bird_best.pth"
 tensorboard_log_dir = "runs/ppo_experiment_hparams2"
 
-run_mode = "test"  # "train" or "test"
+run_mode = "train"  # "train" or "test"
+model_config = transformer_config
+# model_config = mlp_config
 
 if __name__ == '__main__':
     
-    env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=True)
-    # env = gym.make("FlappyBird-v0", use_lidar=True)
-    agent = Agent(config)
+    # env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=True)
+    env = gym.make("FlappyBird-v0", use_lidar=True)
+    agent = Agent(ppo_config, model_config)
     try:
-        agent.load_models(model_best_path, config)
+        agent.load_models(model_best_path)
     except:
         print("No saved models found, starting fresh.")
-    memory = PPOMemory(batch_size=config.batch_size)
+    memory = PPOMemory(batch_size=model_config.batch_size)
     writer = SummaryWriter(tensorboard_log_dir)
 
+    obs_buffer = []
+    if model_config.model_type == "transformer":
+        # Initialize the first 9 observations in the episode
+        obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
     obs_t1, _ = env.reset()
-    obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype).to(agent.device)
+    obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
+    
     t = 0
     terminated = False
     rew_sum = 0.0
@@ -36,12 +43,13 @@ if __name__ == '__main__':
     avg_rew = 0.0
     max_avg_rew = agent.max_avg_rew
 
-    while t < config.total_timesteps:
+    while t < ppo_config.total_timesteps:
         
-        for _ in range(config.rollout_len):
+        for _ in range(ppo_config.rollout_len):
             obs_t = obs_t1
-            value_t = agent.critic.forward(obs_t).item()
-            action_dist = agent.actor.forward(obs_t)
+            obs_buffer.append(obs_t)
+            action_dist, value_t = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0))
+            value_t = value_t.item()
             if run_mode == "train":    
                 action = action_dist.sample()
             else:
@@ -51,13 +59,14 @@ if __name__ == '__main__':
             
             # Step the environment
             obs_t1, reward, terminated, truncated, info = env.step(action_t)
-            obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype).to(agent.device)            
+            obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)           
 
             done_t = terminated
             needs_reset = terminated or truncated
             reward_t = reward
             rew_sum += reward_t
-            memory.store_memory(obs_t, log_prob_t, value_t, reward_t, action_t, done_t)
+            if run_mode == "train":
+                memory.store_memory(obs_buffer[-10:], log_prob_t, value_t, reward_t, action_t, done_t)
             max_high_score = max(info.get("score"), max_high_score)
 
             # If done, start a new game
@@ -69,22 +78,25 @@ if __name__ == '__main__':
                 if avg_rew > max_avg_rew:
                     max_avg_rew = avg_rew
                     if run_mode == "train":
-                        agent.save_models(model_best_path, config, max_avg_rew) 
+                        agent.save_models(model_best_path, max_avg_rew) 
                 writer.add_scalar("Avg Episode Reward (last 100 games)", avg_rew, total_games)
                 writer.add_scalar("Max High Score", max_high_score, total_games)
                 obs_t1, _ = env.reset()
-                obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype).to(agent.device)
+                obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
+                if model_config.model_type == "transformer":
+                    obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
             t += 1
             print(f"{value_t:.2f}\t,{reward_t:.2f},\t{done_t},\t {action_t},\t\
                     {log_prob_t:.2f}\t {info},\t {avg_rew:.2f}")
         
         # We need one more state and value to compute the last advantage
         if run_mode == "train":
-            value_t1 = agent.critic.forward(obs_t1)
-            memory.add_last_obs_value(obs_t1, value_t1.item())
-            agent.learn(memory, writer, t//config.rollout_len)
+            obs_buffer.append(obs_t1)
+            _, value_t1 = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0))
+            memory.add_last_obs_value(obs_buffer[-10:], value_t1.item())
+            agent.learn(memory, writer, t//ppo_config.rollout_len)
             memory.clear_memory()
-            agent.save_models(model_recent_path, config, max_avg_rew)
+            agent.save_models(model_recent_path, max_avg_rew)
     
     writer.close()
     env.close()

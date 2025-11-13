@@ -1,7 +1,8 @@
 import torch
 from torch import nn
 import math
-from hyperparams import TransformerConfig
+from configuration import TransformerConfig
+import torch.optim as optim
 
 
 # Simple linear layer to change dimension of input features to d_model
@@ -37,15 +38,15 @@ class CosineEncode(nn.Module):
         self.angles = self.pos / (10000 ** (self.i / config.d_model))
 
         # Initialize positional encoding matrix
-        self.pe = torch.zeros(config.seq_len, config.d_model)
+        pe = torch.zeros(config.seq_len, config.d_model)
 
         # Compute sin on even columns only
-        self.pe[:, 0::2] = torch.sin(self.angles)
+        pe[:, 0::2] = torch.sin(self.angles)
 
         # Compute cos on odd columns only
-        self.pe[:, 1::2] = torch.cos(self.angles)
+        pe[:, 1::2] = torch.cos(self.angles)
 
-        self.register_buffer('pe', self.pe, persistent=False)
+        self.register_buffer('pe', pe, persistent=False)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
@@ -145,8 +146,9 @@ class Transformer(nn.Module):
             [TransformerBlock(config) for _ in range(config.num_layers)]
         )
         self.norm = nn.LayerNorm(config.d_model)
-        self.policy_head = nn.Linear(config.d_model, config.d_out_policy)
-        self.value_head = nn.Linear(config.d_model, config.d_out_value)
+        self.policy_head = nn.Linear(config.d_model, config.d_out_policy, bias=False)
+        self.value_head = nn.Linear(config.d_model, config.d_out_value, bias=False)
+        self.optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
 
     def forward(self, x):
         x = self.embeddinng(x)
@@ -162,4 +164,11 @@ class Transformer(nn.Module):
 
         policy_out = self.policy_head(x)
         value_out = self.value_head(x)
-        return policy_out, value_out
+        
+        return torch.distributions.Categorical(logits=policy_out), value_out
+    
+    def optim_step(self):
+        self.optimizer.step()
+
+    def optim_zero_grad(self):
+        self.optimizer.zero_grad()
