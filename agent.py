@@ -116,8 +116,8 @@ class Agent:
                 ratio = torch.exp(new_log_prob_batch - old_log_prob_batch)
                 surr1 = ratio * adv_norm_batch
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv_norm_batch
-                # actor_loss = -torch.min(surr1, surr2).mean()
                 actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
+                # actor_loss = -(ratio * adv_norm_batch).mean()
 
                 # Compute critic loss function
                 critic_loss = nn.MSELoss()(new_value_batch, rtg_batch)
@@ -134,6 +134,7 @@ class Agent:
                 self.model.optim_step()
 
                 # step = epoch * (self.rollout_len//self.batch_size) + batch_num
+                # print(f"epoch: {epoch},\t go to 1: {new_action_dist.probs.gather(-1, old_act_batch.unsqueeze(-1)).mean():.4f},\t critic_loss: {critic_loss:.4f},\t entropy: {entropy:.4f},\t go to 1: {(new_action_dist.logits.argmax(dim=-1) == old_act_batch).float().mean():.4f}")
 
     def forward(self, x:list):
         

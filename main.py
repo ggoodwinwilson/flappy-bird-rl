@@ -7,9 +7,9 @@ import flappy_bird_gymnasium
 from collections import deque
 from configuration import ppo_config, mlp_config, transformer_config
 
-model_recent_path = "saved_models/ppo_flappy_bird_recent.pth"
-model_best_path = "saved_models/ppo_flappy_bird_best.pth"
-tensorboard_log_dir = "runs/ppo_experiment_hparams2"
+model_recent_path = "saved_models/ppo_flappy_bird_recent_xfmr256.pth"
+model_best_path = "saved_models/ppo_flappy_bird_best_xfmr256.pth"
+tensorboard_log_dir = "runs/ppo_xfmr_lastpooling_256"
 
 run_mode = "train"  # "train" or "test"
 model_config = transformer_config
@@ -86,8 +86,8 @@ if __name__ == '__main__':
                 if model_config.model_type == "transformer":
                     obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
             t += 1
-            print(f"{value_t:.2f}\t,{reward_t:.2f},\t{done_t},\t {action_t},\t\
-                    {log_prob_t:.2f}\t {info},\t {avg_rew:.2f}")
+            # print(f"{value_t:.2f}\t,{reward_t:.2f},\t{done_t},\t {action_t},\t\
+            #         {log_prob_t:.2f}\t {info},\t {avg_rew:.2f}")
         
         # We need one more state and value to compute the last advantage
         if run_mode == "train":

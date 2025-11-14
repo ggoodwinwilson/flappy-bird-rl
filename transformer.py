@@ -50,7 +50,9 @@ class CosineEncode(nn.Module):
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
-        x = x + self.pe.to(x.device)
+        B, S, D = x.shape
+
+        x = x + self.pe[:S].to(x.device)
         return x
 
 
@@ -160,7 +162,10 @@ class Transformer(nn.Module):
         x = self.norm(x)
 
         # Pooling: take mean of the sequence dimension to compress it
-        x = x.mean(dim=1)
+        # x = x.mean(dim=1)
+
+        # Last token pooling
+        x = x[:, -1, :]
 
         policy_out = self.policy_head(x)
         value_out = self.value_head(x)

@@ -23,8 +23,8 @@ mlp_config = MLPConfig()
 
 @dataclass(frozen=True)
 class TransformerConfig:
-    d_model: int = 128
-    n_heads: int = 8
+    d_model: int = 256
+    n_heads: int = 4
     num_layers: int = 4
     mlp_dim: int = d_model * 4
     dropout_rate: float = 0.1
@@ -52,7 +52,7 @@ class PPOConfig:
     ent_coef: float = 0.02
     critic_coef: float = 0.5
     learning_rate: float = 3e-4
-    rollout_len: int = 128
+    rollout_len: int = 256
     total_timesteps: int = 10_000_000
     d_in: int = 180
 
