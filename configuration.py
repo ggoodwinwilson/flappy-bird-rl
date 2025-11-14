@@ -23,7 +23,7 @@ mlp_config = MLPConfig()
 
 @dataclass(frozen=True)
 class TransformerConfig:
-    d_model: int = 256
+    d_model: int = 128
     n_heads: int = 4
     num_layers: int = 4
     mlp_dim: int = d_model * 4

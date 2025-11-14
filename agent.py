@@ -62,7 +62,13 @@ class Agent:
         dones = torch.as_tensor(memory.dones, device=self.device, dtype=self.dtype)
         old_log_probs = torch.as_tensor(memory.log_probs, device=self.device, dtype=self.dtype)
         values = torch.as_tensor(memory.vals, device=self.device, dtype=self.dtype)
-        observations = torch.stack([torch.stack(obs, dim=0) for obs in memory.obs], dim=0).to(self.device)
+        if self.model_config.model_type == "transformer":
+            observations = torch.stack([torch.stack(obs, dim=0) for obs in memory.obs], dim=0).to(self.device)
+        else:
+            # Observations needs to be stacked and reshaped for MLP
+            observations = [torch.stack(obs, dim=0) for obs in memory.obs]
+            observations = [obs[-1:].clone() for obs in observations]
+            observations = torch.stack(observations, dim=0).to(self.device)
         actions = torch.as_tensor(memory.actions, device=self.device, dtype=torch.int64)
 
         delta = torch.zeros(self.rollout_len, device=self.device, dtype=self.dtype)
@@ -116,6 +122,7 @@ class Agent:
                 ratio = torch.exp(new_log_prob_batch - old_log_prob_batch)
                 surr1 = ratio * adv_norm_batch
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv_norm_batch
+                # actor_loss = -torch.min(surr1, surr2).mean()
                 actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
                 # actor_loss = -(ratio * adv_norm_batch).mean()
 
@@ -137,13 +144,10 @@ class Agent:
                 # print(f"epoch: {epoch},\t go to 1: {new_action_dist.probs.gather(-1, old_act_batch.unsqueeze(-1)).mean():.4f},\t critic_loss: {critic_loss:.4f},\t entropy: {entropy:.4f},\t go to 1: {(new_action_dist.logits.argmax(dim=-1) == old_act_batch).float().mean():.4f}")
 
     def forward(self, x:list):
-        
-        x = x.to(self.device)
-
         if self.model_config.model_type == "transformer":
             return self.model.forward(x)
         else:
-            return self.model.forward(x[-1].to(self.device))
+            return self.model.forward(x[:,-1:,:].squeeze(1))
 
     def save_models(self, path, max_avg_rew):
         torch.save({

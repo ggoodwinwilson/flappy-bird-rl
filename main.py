@@ -7,13 +7,13 @@ import flappy_bird_gymnasium
 from collections import deque
 from configuration import ppo_config, mlp_config, transformer_config
 
-model_recent_path = "saved_models/ppo_flappy_bird_recent_xfmr256.pth"
-model_best_path = "saved_models/ppo_flappy_bird_best_xfmr256.pth"
-tensorboard_log_dir = "runs/ppo_xfmr_lastpooling_256"
+model_recent_path = "saved_models/ppo_flappy_bird_recent_mlp.pth"
+model_best_path = "saved_models/ppo_flappy_bird_best_mlp.pth"
+tensorboard_log_dir = "runs/ppo_mlp"
 
 run_mode = "train"  # "train" or "test"
-model_config = transformer_config
-# model_config = mlp_config
+# model_config = transformer_config
+model_config = mlp_config
 
 if __name__ == '__main__':
     
@@ -48,9 +48,9 @@ if __name__ == '__main__':
         for _ in range(ppo_config.rollout_len):
             obs_t = obs_t1
             obs_buffer.append(obs_t)
-            action_dist, value_t = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0))
+            action_dist, value_t = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0).to(agent.device))
             value_t = value_t.item()
-            if run_mode == "train":    
+            if run_mode == "train":
                 action = action_dist.sample()
             else:
                 action = torch.argmax(action_dist.probs)
@@ -86,13 +86,15 @@ if __name__ == '__main__':
                 if model_config.model_type == "transformer":
                     obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
             t += 1
-            # print(f"{value_t:.2f}\t,{reward_t:.2f},\t{done_t},\t {action_t},\t\
-            #         {log_prob_t:.2f}\t {info},\t {avg_rew:.2f}")
+            print(
+                f"Value: {value_t:.2f},\tReward: {reward_t:.2f},\tDone: {done_t},\t"
+                f"Action: {action_t},\tLog prob: {log_prob_t:.2f}\t, Info: {info},\t Avg Reward: {avg_rew:.2f}"
+            )
         
         # We need one more state and value to compute the last advantage
         if run_mode == "train":
             obs_buffer.append(obs_t1)
-            _, value_t1 = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0))
+            _, value_t1 = agent.forward(torch.stack(obs_buffer[-10:], dim=0).unsqueeze(0).to(agent.device))
             memory.add_last_obs_value(obs_buffer[-10:], value_t1.item())
             agent.learn(memory, writer, t//ppo_config.rollout_len)
             memory.clear_memory()
