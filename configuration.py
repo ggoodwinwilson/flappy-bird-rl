@@ -23,6 +23,7 @@ mlp_config = MLPConfig()
 
 @dataclass(frozen=True)
 class TransformerConfig:
+    model_type = "xfmr"
     d_model: int = 128
     n_heads: int = 4
     num_layers: int = 4
@@ -36,7 +37,6 @@ class TransformerConfig:
     batch_size: int = 32
     dtype: torch.dtype = torch.float32
     learning_rate: float = 3e-4
-    model_type = "xfmr"
 
     def as_dict(self):
         return self.__dict__
@@ -46,6 +46,7 @@ transformer_config = TransformerConfig()
 
 @dataclass(frozen=True)
 class PPOConfig:
+    rl_type: str = 'ppo'
     td_lambda: float = 0.95
     gamma: float = 0.99
     eps_clip: float = 0.2
@@ -53,7 +54,7 @@ class PPOConfig:
     critic_coef: float = 0.5
     learning_rate: float = 3e-4
     rollout_len: int = 256
-    total_timesteps: int = 10_000_000
+    total_train_steps: int = 100_000
     d_in: int = 180
 
     def as_dict(self):
@@ -67,7 +68,7 @@ def make_hparams_dict(rl_config, model_config):
     d = {}
 
     for k, v in rl_config.as_dict().items():
-        d[f"ppo/{k}"] = v
+        d[f"rl/{k}"] = v
 
     for k, v in model_config.as_dict().items():
         d[f"model/{k}"] = v

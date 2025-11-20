@@ -55,7 +55,7 @@ class Agent:
         self.ent_coef = self.ppo_config.ent_coef
         self.critic_coef = self.ppo_config.critic_coef
 
-    def learn(self, memory:PPOMemory, writer:SummaryWriter, traj_step):
+    def learn(self, memory:PPOMemory, writer:SummaryWriter, global_timestep:int):
         
         rewards = torch.as_tensor(memory.rewards, device=self.device, dtype=self.dtype)
         dones = torch.as_tensor(memory.dones, device=self.device, dtype=self.dtype)

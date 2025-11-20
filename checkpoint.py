@@ -27,6 +27,8 @@ class Checkpoint:
 
 class CheckpointManager:
     def __init__(self, agent:Agent, rl_config:PPOConfig):
+        
+        
         self.agent = agent
         self.rl_config = rl_config or {}
         self.model_config = agent.model_config
@@ -64,10 +66,43 @@ class CheckpointManager:
         #     self.agent.scaler.load_state_dict(ckpt.scaler)
         # self._restore_rng(ckpt.rng_state)
 
-def generate_path_name(base_path, agent:Agent, best_or_recent=None, str_var=None):
-    return (
-        f"{base_path}_{best_or_recent or ''}_"
-        f"{agent.model_config.model_type}_"
-        f"dim{agent.model_config.d_model}_"
-        f"{str_var or ''}.pth"
-    )
+def make_run_id(agent: Agent, env_name, rl_type, tag=None):
+    parts = [
+        env_name,
+        rl_type,
+        agent.model_config.model_type,
+        f"dim{agent.model_config.d_model}",
+        tag,
+    ]
+    return "_".join(p for p in parts if p)
+
+def make_paths(agent: Agent, env_name, rl_type, tag=None):
+    run_id = make_run_id(agent, env_name, rl_type, tag)
+
+    return {
+        "run_id": run_id,
+        "tensorboard_dir": f"runs/{run_id}",
+        "checkpoint_recent": f"checkpoints/{run_id}_recent.pth",
+        "checkpoint_best": f"checkpoints/{run_id}_best.pth",
+    }
+
+
+# def save_models(model:Agent, path, global_step, max_avg_rew):
+#     torch.save({
+#         "model": model.state_dict(),
+#         "ppo_config": model.ppo_config.as_dict(),
+#         "model_config": model.model_config.as_dict(),
+#         "max_avg_rew": max_avg_rew,
+#         "global_step": global_step
+#     }, path)
+
+# def load_models(model:Agent, path):
+#     bundle = torch.load(path, map_location=model.device)
+#     if bundle["ppo_config"] != model.ppo_config.as_dict() or \
+#         bundle["model_config"] != model.model_config.as_dict():
+#         raise ValueError("Checkpoint config mismatch")
+#     model.load_state_dict(bundle["model"])
+#     avg_rew = bundle.get("avg_rew", float('-inf'))
+#     global_step = bundle.get("global_step", float('-inf'))
+#     return avg_rew, global_step
+
