@@ -45,7 +45,6 @@ class Agent:
             self.model = Transformer(config=self.model_config).to(self.device)
         else:
             self.model = MLP(config=self.model_config).to(self.device)
-        self.max_avg_rew = float('-inf')
         self.batch_size = self.model_config.batch_size
         self.num_epochs = self.model_config.num_epochs
         self.dtype = self.model_config.dtype
@@ -148,19 +147,3 @@ class Agent:
             return self.model.forward(x)
         else:
             return self.model.forward(x[:,-1:,:].squeeze(1))
-
-    def save_models(self, path, max_avg_rew):
-        torch.save({
-            "model": self.model.state_dict(),
-            "ppo_config": self.ppo_config.as_dict(),
-            "model_config": self.model_config.as_dict(),
-            "max_avg_rew": max_avg_rew
-        }, path)
-
-    def load_models(self, path) -> float:
-        bundle = torch.load(path, map_location=self.device)
-        if bundle["ppo_config"] != self.ppo_config.as_dict() or \
-            bundle["model_config"] != self.model_config.as_dict():
-            raise ValueError("Checkpoint config mismatch")
-        self.model.load_state_dict(bundle["model"])
-        self.max_avg_rew = bundle.get("max_avg_rew", float('-inf'))

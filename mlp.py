@@ -36,9 +36,9 @@ class CriticNetwork(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config:MLPConfig):
         super().__init__()
-        self.actor = ActorNetwork(d_in=config.d_in, d_hidden=config.d_hidden_actor, 
+        self.actor = ActorNetwork(d_in=config.d_in, d_hidden=config.d_model, 
                                 d_out=config.d_out_actor)
-        self.critic = CriticNetwork(d_in=config.d_in, d_hidden=config.d_hidden_critic, 
+        self.critic = CriticNetwork(d_in=config.d_in, d_hidden=config.d_model_critic, 
                                     d_out=config.d_out_critic)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=config.learning_rate)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=config.learning_rate)

@@ -7,8 +7,8 @@ class MLPConfig:
     d_in: int = 180
     d_out_actor: int = 2
     d_out_critic: int = 1
-    d_hidden_actor: int = 512
-    d_hidden_critic: int = 512
+    d_model: int = 512
+    d_model_critic: int = 512
     learning_rate: float = 3e-4
     num_epochs: int = 3
     batch_size: int = 32
@@ -36,7 +36,7 @@ class TransformerConfig:
     batch_size: int = 32
     dtype: torch.dtype = torch.float32
     learning_rate: float = 3e-4
-    model_type = "transformer"
+    model_type = "xfmr"
 
     def as_dict(self):
         return self.__dict__
@@ -60,3 +60,16 @@ class PPOConfig:
         return self.__dict__
     
 ppo_config = PPOConfig()
+
+
+def make_hparams_dict(rl_config, model_config):
+
+    d = {}
+
+    for k, v in rl_config.as_dict().items():
+        d[f"ppo/{k}"] = v
+
+    for k, v in model_config.as_dict().items():
+        d[f"model/{k}"] = v
+
+    return d

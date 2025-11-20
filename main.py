@@ -7,6 +7,7 @@ import flappy_bird_gymnasium
 from collections import deque
 from configuration import ppo_config, mlp_config, transformer_config
 
+model_base_path = "saved_models/ppo_flappy_bird"
 model_recent_path = "saved_models/ppo_flappy_bird_recent_mlp.pth"
 model_best_path = "saved_models/ppo_flappy_bird_best_mlp.pth"
 tensorboard_log_dir = "runs/ppo_mlp"
@@ -19,16 +20,19 @@ if __name__ == '__main__':
     
     # env = gym.make("FlappyBird-v0", render_mode="human", use_lidar=True)
     env = gym.make("FlappyBird-v0", use_lidar=True)
+    
+    # Model is defined in the Agent class
     agent = Agent(ppo_config, model_config)
+    model_path = model_recent_path if run_mode == "train" else model_best_path
     try:
-        agent.load_models(model_best_path)
+        avg_rew, max_avg_rew, global_step = agent.load_models(model_path)
     except:
         print("No saved models found, starting fresh.")
     memory = PPOMemory(batch_size=model_config.batch_size)
     writer = SummaryWriter(tensorboard_log_dir)
 
     obs_buffer = []
-    if model_config.model_type == "transformer":
+    if model_config.model_type == "xfmr":
         # Initialize the first 9 observations in the episode
         obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
     obs_t1, _ = env.reset()
@@ -41,7 +45,7 @@ if __name__ == '__main__':
     rewards_fifo = deque(maxlen=100)
     max_high_score = 0
     avg_rew = 0.0
-    max_avg_rew = agent.max_avg_rew
+    max_avg_rew = 0.0
 
     while t < ppo_config.total_timesteps:
         
@@ -78,12 +82,13 @@ if __name__ == '__main__':
                 if avg_rew > max_avg_rew:
                     max_avg_rew = avg_rew
                     if run_mode == "train":
-                        agent.save_models(model_best_path, max_avg_rew) 
-                writer.add_scalar("Avg Episode Reward (last 100 games)", avg_rew, total_games)
-                writer.add_scalar("Max High Score", max_high_score, total_games)
+                        # Save the best performing model
+                        agent.save_models(model_best_path) 
+                writer.add_scalar("Avg Episode Reward (last 100 games)", avg_rew, total_games, global_step)
+                writer.add_scalar("Max High Score", max_high_score, total_games, global_step)
                 obs_t1, _ = env.reset()
                 obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
-                if model_config.model_type == "transformer":
+                if model_config.model_type == "xfmr":
                     obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
             t += 1
             print(
@@ -102,3 +107,23 @@ if __name__ == '__main__':
     
     writer.close()
     env.close()
+
+# def save_models(model:Agent, path, global_step, max_avg_rew):
+#     torch.save({
+#         "model": model.state_dict(),
+#         "ppo_config": model.ppo_config.as_dict(),
+#         "model_config": model.model_config.as_dict(),
+#         "max_avg_rew": max_avg_rew,
+#         "global_step": global_step
+#     }, path)
+
+# def load_models(model:Agent, path):
+#     bundle = torch.load(path, map_location=model.device)
+#     if bundle["ppo_config"] != model.ppo_config.as_dict() or \
+#         bundle["model_config"] != model.model_config.as_dict():
+#         raise ValueError("Checkpoint config mismatch")
+#     model.load_state_dict(bundle["model"])
+#     avg_rew = bundle.get("avg_rew", float('-inf'))
+#     global_step = bundle.get("global_step", float('-inf'))
+#     return avg_rew, global_step
+
