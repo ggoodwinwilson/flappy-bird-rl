@@ -5,8 +5,9 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import flappy_bird_gymnasium
 from collections import deque
-from configuration import ppo_config, mlp_config, transformer_config
-from checkpoint import Checkpoint, CheckpointManager, make_paths
+from configuration import ppo_config, mlp_config, transformer_config, make_hparams_dict
+from checkpoint import CheckpointManager, make_paths
+import os
 
 run_mode = "train"
 # run_mode = "eval"
@@ -22,23 +23,26 @@ if __name__ == '__main__':
     # Model is defined in the Agent class
     agent = Agent(rl_config, model_config)
     ckpt = CheckpointManager(agent, rl_config)
-    paths = make_paths(model_config, "flappy_bird", rl_config.rl_type)
-    agent.load(paths["checkpoint_recent"])
+    paths = make_paths(agent, "flappy_bird", rl_config.rl_type)
     memory = PPOMemory(batch_size=model_config.batch_size)
     writer = SummaryWriter(paths["tensorboard_dir"])
+    writer.add_text("hparams", str(make_hparams_dict(rl_config, model_config)))
+    
+    # Resume checkpoint if it exists
+    if os.path.exists(paths["checkpoint_recent"]):
+        ckpt.load(paths["checkpoint_recent"], map_location=agent.device)
 
     # Initialize the first 9 observations in the episode for xfmr model
     obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
     obs_t1, _ = env.reset()
     obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
-    
-    training_steps = 0
+
     terminated = False
     rewards_fifo = deque(maxlen=10000)
     max_high_score = 0
-    max_avg_rew = 0.0
+    ckpt.max_1k_rew = float('-inf')
 
-    while training_steps < rl_config.total_train_steps:
+    while ckpt.training_step < rl_config.total_train_steps:
         
         for _ in range(rl_config.rollout_len):
             obs_t = obs_t1
@@ -61,7 +65,7 @@ if __name__ == '__main__':
             reward_t = reward
             if run_mode == "train":
                 memory.store_memory(obs_buffer[-10:], log_prob_t, value_t, reward_t, action_t, done_t)
-            max_high_score = max(info.get("score"), max_high_score)
+            ckpt.max_high_score = max(info.get("score"), ckpt.max_high_score)
 
             rewards_fifo.append(reward_t)
 
@@ -70,10 +74,6 @@ if __name__ == '__main__':
                 obs_t1, _ = env.reset()
                 obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
                 obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
-            print(
-                f"Value: {value_t:.2f},\tReward: {reward_t:.2f},\tDone: {done_t},\t"
-                f"Action: {action_t},\tLog prob: {log_prob_t:.2f}\t, Info: {info},\t Avg Reward: {avg_rew:.2f}"
-            )
         
         if run_mode == "train":
             
@@ -83,19 +83,23 @@ if __name__ == '__main__':
             memory.add_last_obs_value(obs_buffer[-10:], value_t1.item())
             
             # Train the model
-            agent.learn(memory, writer, training_steps)
-            training_steps += 1
+            agent.learn(memory, writer, ckpt.training_step)
+            ckpt.training_step += 1
             memory.clear_memory()
             
             # Log training statsand save models
-            avg_rew = sum(rewards_fifo)/len(rewards_fifo)
-            writer.add_scalar("Total 1000 Step Reward", avg_rew, global_step=training_steps)
-            writer.add_scalar("Max High Score", max_high_score, global_step=training_steps)
-            if avg_rew > max_avg_rew:
-                max_avg_rew = avg_rew
-                agent.save_models(paths["checkpoint_best"]) 
-            if training_steps % 5 == 0:
-                agent.save_models(paths["checkpoint_recent"])
+            last_1k_rew = sum(list(rewards_fifo)[-1000:])
+            if last_1k_rew > ckpt.max_1k_rew:
+                ckpt.max_1k_rew = last_1k_rew
+                ckpt.save(paths["checkpoint_best"])
+            if ckpt.training_step % 5 == 0:
+                ckpt.save(paths["checkpoint_recent"])
+            writer.add_scalar("Total 1000 Step Reward", last_1k_rew, global_step=ckpt.training_step)
+            writer.add_scalar("Max High Score", ckpt.max_high_score, global_step=ckpt.training_step)
+            print(
+                f"Value: {value_t:.2f},\tReward: {reward_t:.2f},\tDone: {done_t},\t"
+                f"Action: {action_t},\tLog prob: {log_prob_t:.2f}\t, Info: {info},\t Last 1k Rew: {last_1k_rew:.2f}"
+            )
     
     writer.close()
     env.close()

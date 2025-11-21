@@ -37,23 +37,23 @@ class PPOMemory:
         del self.dones[:]
     
 class Agent:
-    def __init__(self, ppo_config: PPOConfig, model_config):
-        self.ppo_config = ppo_config
+    def __init__(self, rl_config: PPOConfig, model_config):
+        self.rl_config = rl_config
+        self.rollout_len = self.rl_config.rollout_len
+        self.gamma = self.rl_config.gamma
+        self.td_lambda = self.rl_config.td_lambda
+        self.eps_clip = self.rl_config.eps_clip
+        self.ent_coef = self.rl_config.ent_coef
+        self.critic_coef = self.rl_config.critic_coef
         self.model_config = model_config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if self.model_config.model_type == "transformer":
-            self.model = Transformer(config=self.model_config).to(self.device)
-        else:
-            self.model = MLP(config=self.model_config).to(self.device)
         self.batch_size = self.model_config.batch_size
         self.num_epochs = self.model_config.num_epochs
         self.dtype = self.model_config.dtype
-        self.rollout_len = self.ppo_config.rollout_len
-        self.gamma = self.ppo_config.gamma
-        self.td_lambda = self.ppo_config.td_lambda
-        self.eps_clip = self.ppo_config.eps_clip
-        self.ent_coef = self.ppo_config.ent_coef
-        self.critic_coef = self.ppo_config.critic_coef
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if self.model_config.model_type == "xfmr":
+            self.model = Transformer(config=self.model_config).to(self.device)
+        else:
+            self.model = MLP(config=self.model_config).to(self.device)
 
     def learn(self, memory:PPOMemory, writer:SummaryWriter, global_timestep:int):
         
@@ -61,7 +61,7 @@ class Agent:
         dones = torch.as_tensor(memory.dones, device=self.device, dtype=self.dtype)
         old_log_probs = torch.as_tensor(memory.log_probs, device=self.device, dtype=self.dtype)
         values = torch.as_tensor(memory.vals, device=self.device, dtype=self.dtype)
-        if self.model_config.model_type == "transformer":
+        if self.model_config.model_type == "xfmr":
             observations = torch.stack([torch.stack(obs, dim=0) for obs in memory.obs], dim=0).to(self.device)
         else:
             # Observations needs to be stacked and reshaped for MLP
@@ -143,7 +143,34 @@ class Agent:
                 # print(f"epoch: {epoch},\t go to 1: {new_action_dist.probs.gather(-1, old_act_batch.unsqueeze(-1)).mean():.4f},\t critic_loss: {critic_loss:.4f},\t entropy: {entropy:.4f},\t go to 1: {(new_action_dist.logits.argmax(dim=-1) == old_act_batch).float().mean():.4f}")
 
     def forward(self, x:list):
-        if self.model_config.model_type == "transformer":
+        if self.model_config.model_type == "xfmr":
             return self.model.forward(x)
         else:
             return self.model.forward(x[:,-1:,:].squeeze(1))
+        
+    def state_dict(self):
+        return {
+            "model": self.model.state_dict(),
+            "actor_opt": getattr(self.model, "actor_optimizer", None) and self.model.actor_optimizer.state_dict(),
+            "critic_opt": getattr(self.model, "critic_optimizer", None) and self.model.critic_optimizer.state_dict(),
+            "optimizer": getattr(self.model, "optimizer", None) and self.model.optimizer.state_dict(),
+            "scheduler": getattr(self, "scheduler", None) and self.scheduler.state_dict(),
+            "scaler": getattr(self, "scaler", None) and self.scaler.state_dict(),
+            "config": {
+                "ppo": self.rl_config.as_dict(),
+                "model": self.model_config.as_dict(),
+            },
+        }
+
+    def load_state_dict(self, state):
+        self.model.load_state_dict(state["model"])
+        if state.get("actor_opt") and hasattr(self.model, "actor_optimizer"):
+            self.model.actor_optimizer.load_state_dict(state["actor_opt"])
+        if state.get("critic_opt") and hasattr(self.model, "critic_optimizer"):
+            self.model.critic_optimizer.load_state_dict(state["critic_opt"])
+        if state.get("optimizer") and hasattr(self.model, "optimizer"):
+            self.model.optimizer.load_state_dict(state["optimizer"])
+        if state.get("scheduler") and hasattr(self, "scheduler"):
+            self.scheduler.load_state_dict(state["scheduler"])
+        if state.get("scaler") and hasattr(self, "scaler"):
+            self.scaler.load_state_dict(state["scaler"])
