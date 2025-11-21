@@ -7,12 +7,13 @@ class MLPConfig:
     d_in: int = 180
     d_out_actor: int = 2
     d_out_critic: int = 1
-    d_model: int = 512
+    d_model: int = 128
     d_model_critic: int = 512
     learning_rate: float = 3e-4
     num_epochs: int = 3
     batch_size: int = 32
     dtype: torch.dtype = torch.float32
+    seq_len: int = 10 # Only used for transformers, kept for compatibility
     model_type = "mlp"
 
     def as_dict(self):
@@ -72,5 +73,10 @@ def make_hparams_dict(rl_config, model_config):
 
     for k, v in model_config.as_dict().items():
         d[f"model/{k}"] = v
+
+    # Make sure dict is compatible with Tensorboard
+    for k in d.keys():
+        if isinstance(d[k], torch.dtype):
+            d[k] = str(d[k])
 
     return d

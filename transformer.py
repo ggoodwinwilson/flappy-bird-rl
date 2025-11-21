@@ -151,6 +151,8 @@ class Transformer(nn.Module):
         self.policy_head = nn.Linear(config.d_model, config.d_out_policy, bias=False)
         self.value_head = nn.Linear(config.d_model, config.d_out_value, bias=False)
         self.optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
+        self.scheduler = None
+        self.scaler = None
 
     def forward(self, x):
         x = self.embeddinng(x)
@@ -177,3 +179,20 @@ class Transformer(nn.Module):
 
     def optim_zero_grad(self):
         self.optimizer.zero_grad()
+
+    def state_dict(self, *args, **kwargs):
+
+        return {
+            "model": super().state_dict(*args, **kwargs),
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict() if getattr(self, "scheduler", None) else None,
+            "scaler": self.scaler.state_dict() if getattr(self, "scaler", None) else None
+        }
+
+    def load_state_dict(self, state, *args, **kwargs):
+        super().load_state_dict(state["model"], *args, **kwargs)
+        self.optimizer.load_state_dict(state["optimizer"])
+        if getattr(self, "scheduler", None) and state["scheduler"] is not None:
+            self.scheduler.load_state_dict(state["scheduler"])
+        if getattr(self, "scaler", None) and state["scaler"] is not None:
+            self.scaler.load_state_dict(state["scaler"])
