@@ -1,6 +1,5 @@
 import gymnasium as gym
 from agent import Agent, PPOMemory
-import gymnasium as gym
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import flappy_bird_gymnasium
