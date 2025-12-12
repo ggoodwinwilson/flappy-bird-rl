@@ -7,8 +7,8 @@ class MLPConfig:
     d_in: int = 180
     d_out_actor: int = 2
     d_out_critic: int = 1
-    d_model: int = 128
-    d_model_critic: int = 128
+    d_model: int = 258
+    d_model_critic: int = 258
     learning_rate: float = 3e-4
     num_epochs: int = 3
     batch_size: int = 32
@@ -62,7 +62,6 @@ class PPOConfig:
         return self.__dict__
     
 ppo_config = PPOConfig()
-
 
 def make_hparams_dict(rl_config, model_config):
 

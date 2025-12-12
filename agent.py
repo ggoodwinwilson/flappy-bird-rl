@@ -93,6 +93,9 @@ class Agent:
         advantage = advantage[:-1]
         advantage_norm = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
+        entropy_history = []
+        kl_history = []
+
         for epoch in range(self.num_epochs):
 
             # Generate random minibatch indices
@@ -116,13 +119,14 @@ class Agent:
                 new_log_prob_batch = new_action_dist.log_prob(old_act_batch)
                 entropy = new_action_dist.entropy().mean()
                 new_value_batch = new_value_batch.squeeze(-1)
+                approx_kl = (old_log_prob_batch - new_log_prob_batch).mean().detach()
 
                 # Compute actor loss function
                 ratio = torch.exp(new_log_prob_batch - old_log_prob_batch)
                 surr1 = ratio * adv_norm_batch
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * adv_norm_batch
-                # actor_loss = -torch.min(surr1, surr2).mean()
-                actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
+                actor_loss = -torch.min(surr1, surr2).mean()
+                # actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
                 # actor_loss = -(ratio * adv_norm_batch).mean()
 
                 # Compute critic loss function
@@ -139,8 +143,23 @@ class Agent:
                 )
                 self.model.optim_step()
 
+                entropy_history.append(entropy.detach())
+                kl_history.append(approx_kl)
+
                 # step = epoch * (self.rollout_len//self.batch_size) + batch_num
                 # print(f"epoch: {epoch},\t go to 1: {new_action_dist.probs.gather(-1, old_act_batch.unsqueeze(-1)).mean():.4f},\t critic_loss: {critic_loss:.4f},\t entropy: {entropy:.4f},\t go to 1: {(new_action_dist.logits.argmax(dim=-1) == old_act_batch).float().mean():.4f}")
+
+        if writer is not None and entropy_history:
+            writer.add_scalar(
+                "Policy/entropy",
+                torch.stack(entropy_history).mean().item(),
+                global_step=global_timestep,
+            )
+            writer.add_scalar(
+                "Policy/approx_kl",
+                torch.stack(kl_history).mean().item(),
+                global_step=global_timestep,
+            )
 
     def forward(self, x:list):
         if self.model_config.model_type == "xfmr":

@@ -7,6 +7,9 @@ from typing import Optional, Dict, Any
 from configuration import PPOConfig
 import os
 
+TENSORBOARD_BASE_DIR = "runs_tensorboard"
+CHECKPOINT_BASE_DIR = "checkpoints_tensorboard"
+
 class CheckpointManager:
     def __init__(self, agent: Agent, rl_config: PPOConfig):
         self.agent = agent
@@ -96,7 +99,7 @@ def make_paths(agent: Agent, env_name, rl_type, tag=None):
 
     return {
         "run_id": run_id,
-        "tensorboard_dir": f"runs/{run_id}",
-        "checkpoint_recent": f"checkpoints/{run_id}_recent.pth",
-        "checkpoint_best": f"checkpoints/{run_id}_best.pth",
+        "tensorboard_dir": os.path.join(TENSORBOARD_BASE_DIR, run_id),
+        "checkpoint_recent": os.path.join(CHECKPOINT_BASE_DIR, f"{run_id}_recent.pth"),
+        "checkpoint_best": os.path.join(CHECKPOINT_BASE_DIR, f"{run_id}_best.pth"),
     }

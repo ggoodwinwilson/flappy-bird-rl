@@ -3,7 +3,10 @@ from torch import nn
 import math
 from configuration import TransformerConfig
 import torch.optim as optim
-
+from bertviz import head_view
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Simple linear layer to change dimension of input features to d_model
 class InputEmbedding(nn.Module):
@@ -103,7 +106,7 @@ class Attention(nn.Module):
         atn_output = self.w_o(atn_output)
 
         # add atn_output to the original input (residual connection)
-        return atn_output + residual
+        return atn_output + residual, atn_weights
 
 
 class MLP(nn.Module):
@@ -134,9 +137,9 @@ class TransformerBlock(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = self.attention(x)
+        x, atn_weights = self.attention(x)
         x = self.mlp(x)
-        return x
+        return x, atn_weights
 
 
 class Transformer(nn.Module):
@@ -157,9 +160,11 @@ class Transformer(nn.Module):
     def forward(self, x):
         x = self.embeddinng(x)
         x = self.pos_encoding(x)
+        self.latest_attention_weights = []
 
         for block in self.transformer_blocks:
-            x = block(x)
+            x, atn_matrix = block(x)
+            self.latest_attention_weights.append(atn_matrix.detach())
 
         x = self.norm(x)
 
@@ -196,3 +201,90 @@ class Transformer(nn.Module):
             self.scheduler.load_state_dict(state["scheduler"])
         if getattr(self, "scaler", None) and state["scaler"] is not None:
             self.scaler.load_state_dict(state["scaler"])
+
+    def visualize_attention(self, tokens=None, save_path=None, env_frame=None, frame_title="Game Frame"):
+        """
+        Plots the attention weights stored in self.latest_attention_weights.
+        If env_frame is provided (numpy array, PIL image, or torch.Tensor),
+        the game frame will be placed beside the attention grid so you can
+        correlate activations with what the agent saw.
+        """
+        if not hasattr(self, 'latest_attention_weights'):
+            print("No attention weights saved. Run forward() first.")
+            return
+
+        # Get the list of tensors [Batch, Heads, Seq, Seq]
+        atn_matrices = self.latest_attention_weights
+        
+        # We only visualize the first item in the batch
+        # Dimensions
+        n_layers = len(atn_matrices)
+        n_heads = atn_matrices[0].shape[1]
+        seq_len = atn_matrices[0].shape[-1]
+        
+        if tokens is None:
+            tokens = [str(i) for i in range(seq_len)]
+
+        # Create layout. If a frame is provided, dedicate the first column to it.
+        if env_frame is not None:
+            fig = plt.figure(figsize=(n_heads * 3 + 4, n_layers * 3))
+            gs = fig.add_gridspec(n_layers, n_heads + 1, width_ratios=[1.5] + [1] * n_heads)
+
+            # Normalize possible frame inputs to a uint8 numpy array for imshow
+            if isinstance(env_frame, torch.Tensor):
+                env_img = env_frame.detach().cpu().numpy()
+            elif hasattr(env_frame, "convert"):  # PIL.Image
+                env_img = np.array(env_frame)
+            else:
+                env_img = np.array(env_frame)
+            env_img = np.clip(env_img, 0, 255).astype(np.uint8)
+
+            frame_ax = fig.add_subplot(gs[:, 0])
+            frame_ax.imshow(env_img)
+            frame_ax.axis("off")
+            frame_ax.set_title(frame_title, fontsize=12)
+
+            axes = [
+                [fig.add_subplot(gs[l, c + 1]) for c in range(n_heads)]
+                for l in range(n_layers)
+            ]
+            axes = np.array(axes, dtype=object)
+        else:
+            fig, axes = plt.subplots(n_layers, n_heads, figsize=(n_heads*3, n_layers*3))
+            
+            # Handle edge case if only 1 layer or 1 head (axes wouldn't be 2D array)
+            if n_layers == 1 and n_heads == 1:
+                axes = np.array([[axes]])
+            elif n_layers == 1:
+                axes = axes[None, :]
+            elif n_heads == 1:
+                axes = axes[:, None]
+
+        for l in range(n_layers):
+            for h in range(n_heads):
+                # Get heatmap data for Layer l, Head h, Batch 0
+                # .detach().cpu().numpy() is crucial to move from GPU -> Plot
+                data = atn_matrices[l][0, h].detach().cpu().numpy()
+                
+                ax = axes[l, h]
+                
+                # Plot Heatmap
+                sns.heatmap(data, ax=ax, cmap='viridis', cbar=False, square=True,
+                            xticklabels=tokens if l == n_layers - 1 else False, # Label bottom only
+                            yticklabels=tokens if h == 0 else False)            # Label left only
+                
+                # Titles
+                if l == 0: ax.set_title(f"Head {h}", fontsize=12)
+                if h == 0: ax.set_ylabel(f"Layer {l}", fontsize=12, rotation=0, labelpad=30)
+
+        fig.suptitle("Attention Weights (Layers x Heads)", fontsize=16)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        
+        if save_path:
+            fig.savefig(save_path)
+            print(f"Saved attention plot to {save_path}")
+        else:
+            plt.show()
+        
+        # Close to free memory
+        plt.close(fig)
