@@ -10,37 +10,88 @@ import os
 from PIL import Image
 from pygame_viewer import PygameViewer
 from value_overlay import ValueGraphOverlay, ValueOverlayConfig
+import argparse
 
-run_mode = os.environ.get("RUN_MODE", "train").strip().lower()
-if run_mode not in {"train", "eval"}:
-    raise ValueError("RUN_MODE must be 'train' or 'eval'")
+run_mode = "train"
 # model_config = transformer_config
 model_config = mlp_config
 rl_config = ppo_config
-ATTENTION_DEBUG = run_mode == "eval"
+ATTENTION_DEBUG = False
 ATTENTION_DEBUG_LIMIT = 0
 ATTENTION_DEBUG_DIR = "debug_frames"
 
 if __name__ == '__main__':
-    
-    # --- Eval/Render toggles ---
-    # Uncomment to play manually (only meaningful in eval):
-    # HUMAN_PLAY = True
-    HUMAN_PLAY = False
-    SHOW_VALUE_OVERLAY = True
-    RENDER_DURING_TRAIN = True
-    RENDER_EVERY_N_STEPS = 2  # increase for faster training
-    # The value overlay needs pixel frames; we display them in our own pygame window.
-    # If you set this to "human", the environment renders its own window and returns no frames (so no overlay).
-    EVAL_RENDER_MODE = "rgb_array"
-    DISPLAY_SCALE = 1
-    DISPLAY_FPS = 60
+    parser = argparse.ArgumentParser(description="Flappy Bird PPO (train/eval) with optional value overlay UI.")
+    parser.add_argument(
+        "--mode",
+        choices=["train", "eval"],
+        default="train",
+        help="Run mode (default: train).",
+    )
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="Show the pygame viewer during execution (default: off).",
+    )
+    parser.add_argument(
+        "--overlay",
+        action="store_true",
+        help="Overlay a rolling value-function graph (default: off). Requires --render.",
+    )
+    parser.add_argument(
+        "--human-play",
+        action="store_true",
+        help="In eval, control the bird yourself (Space/Up flap).",
+    )
+    parser.add_argument(
+        "--render-every",
+        type=int,
+        default=2,
+        help="Render every N env steps (train only, default: 2).",
+    )
+    parser.add_argument(
+        "--display-scale",
+        type=int,
+        default=1,
+        help="Viewer window scale factor (default: 1).",
+    )
+    parser.add_argument(
+        "--display-fps",
+        type=int,
+        default=60,
+        help="Viewer target FPS (default: 60).",
+    )
+    parser.add_argument(
+        "--eval-render-mode",
+        choices=["rgb_array", "human"],
+        default="rgb_array",
+        help="Gym render_mode used in eval (default: rgb_array).",
+    )
+    args = parser.parse_args()
 
-    want_pixels = (run_mode == "eval") or (run_mode == "train" and RENDER_DURING_TRAIN)
-    render_mode = (EVAL_RENDER_MODE if (run_mode == "eval") else "rgb_array") if want_pixels else None
-    if want_pixels and SHOW_VALUE_OVERLAY and render_mode != "rgb_array":
-        print("[warn] SHOW_VALUE_OVERLAY requires render_mode='rgb_array'; overriding.")
-        render_mode = "rgb_array"
+    run_mode = args.mode
+    HUMAN_PLAY = bool(args.human_play)
+    RENDER_EVERY_N_STEPS = max(1, int(args.render_every))
+    DISPLAY_SCALE = max(1, int(args.display_scale))
+    DISPLAY_FPS = int(args.display_fps)
+    EVAL_RENDER_MODE = args.eval_render_mode
+
+    RENDER_DURING_TRAIN = bool(args.render) and run_mode == "train"
+    RENDER_DURING_EVAL = bool(args.render) and run_mode == "eval"
+    SHOW_VALUE_OVERLAY = bool(args.overlay) and bool(args.render)
+
+    ATTENTION_DEBUG = run_mode == "eval"
+
+    # The viewer/overlay requires pixel frames from env.render(), i.e. render_mode='rgb_array'.
+    want_pixels = (run_mode == "eval" and (RENDER_DURING_EVAL or SHOW_VALUE_OVERLAY)) or (
+        run_mode == "train" and (RENDER_DURING_TRAIN or SHOW_VALUE_OVERLAY)
+    )
+    render_mode = None
+    if want_pixels:
+        render_mode = EVAL_RENDER_MODE if run_mode == "eval" else "rgb_array"
+        if render_mode != "rgb_array":
+            print("[warn] --render/--overlay requires render_mode='rgb_array'; overriding.")
+            render_mode = "rgb_array"
     if render_mode is None:
         env = gym.make("FlappyBird-v0", use_lidar=True)
     else:
@@ -79,10 +130,11 @@ if __name__ == '__main__':
     attention_captures = 0
 
     if run_mode == "eval":
-        viewer = PygameViewer(window_scale=DISPLAY_SCALE, target_fps=DISPLAY_FPS)
-        value_overlay = ValueGraphOverlay(ValueOverlayConfig()) if SHOW_VALUE_OVERLAY else None
+        viewer = PygameViewer(window_scale=DISPLAY_SCALE, target_fps=DISPLAY_FPS) if RENDER_DURING_EVAL else None
+        value_overlay = ValueGraphOverlay(ValueOverlayConfig()) if (SHOW_VALUE_OVERLAY and viewer is not None) else None
         try:
-            print("[eval] Controls: Space/Up=flap  R=reset  P=pause  Q/Esc=quit")
+            if viewer is not None:
+                print("[eval] Controls: Space/Up=flap  R=reset  P=pause  Q/Esc=quit")
             while True:
                 env_step_count += 1
                 obs_t = obs_t1
@@ -94,50 +146,52 @@ if __name__ == '__main__':
                     )
                 value_t = float(value_t.item())
 
-                frame = env.render()
-                if frame is None:
-                    raise RuntimeError(
-                        "env.render() returned None. For the overlay, run eval with render_mode='rgb_array' "
-                        "(set EVAL_RENDER_MODE='rgb_array' and don't use render_mode='human')."
-                    )
-                if value_overlay is not None:
-                    value_overlay.update(value_t)
-
-                if (
-                    ATTENTION_DEBUG
-                    and attention_captures < ATTENTION_DEBUG_LIMIT
-                    and hasattr(agent.model, "visualize_attention")
-                ):
-                    os.makedirs(ATTENTION_DEBUG_DIR, exist_ok=True)
-                    save_path = os.path.join(
-                        ATTENTION_DEBUG_DIR, f"attention_step_{env_step_count:05d}.png"
-                    )
-                    agent.model.visualize_attention(
-                        save_path=save_path,
-                        env_frame=frame,
-                        frame_title=f"Step {env_step_count}",
-                    )
-                    attention_captures += 1
-
-                dt = viewer.show(frame if value_overlay is None else value_overlay.draw(frame))
-                if value_overlay is not None:
-                    value_overlay.update_fps(dt_sec=dt)
-
-                controls = viewer.poll()
-                if controls.quit:
-                    break
-                if controls.reset:
-                    obs_t1, _ = env.reset()
-                    obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
-                    obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
+                controls = None
+                if viewer is not None:
+                    frame = env.render()
+                    if frame is None:
+                        raise RuntimeError(
+                            "env.render() returned None. For the UI/overlay, run eval with --eval-render-mode rgb_array "
+                            "(not 'human')."
+                        )
                     if value_overlay is not None:
-                        value_overlay.reset()
-                    continue
-                if viewer.paused:
-                    continue
+                        value_overlay.update(value_t)
+
+                    if (
+                        ATTENTION_DEBUG
+                        and attention_captures < ATTENTION_DEBUG_LIMIT
+                        and hasattr(agent.model, "visualize_attention")
+                    ):
+                        os.makedirs(ATTENTION_DEBUG_DIR, exist_ok=True)
+                        save_path = os.path.join(
+                            ATTENTION_DEBUG_DIR, f"attention_step_{env_step_count:05d}.png"
+                        )
+                        agent.model.visualize_attention(
+                            save_path=save_path,
+                            env_frame=frame,
+                            frame_title=f"Step {env_step_count}",
+                        )
+                        attention_captures += 1
+
+                    dt = viewer.show(frame if value_overlay is None else value_overlay.draw(frame))
+                    if value_overlay is not None:
+                        value_overlay.update_fps(dt_sec=dt)
+
+                    controls = viewer.poll()
+                    if controls.quit:
+                        break
+                    if controls.reset:
+                        obs_t1, _ = env.reset()
+                        obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
+                        obs_buffer = [torch.ones(180)] * (model_config.seq_len - 1)
+                        if value_overlay is not None:
+                            value_overlay.reset()
+                        continue
+                    if viewer.paused:
+                        continue
 
                 if HUMAN_PLAY:
-                    action_t = 1 if controls.flap else 0
+                    action_t = 1 if (controls is not None and controls.flap) else 0
                 else:
                     action_t = int(torch.argmax(action_dist.probs).item())
 
@@ -152,7 +206,8 @@ if __name__ == '__main__':
                     if value_overlay is not None:
                         value_overlay.reset()
         finally:
-            viewer.close()
+            if viewer is not None:
+                viewer.close()
     else:
         viewer = None
         value_overlay = None
