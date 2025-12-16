@@ -7,8 +7,8 @@ from typing import Optional, Dict, Any
 from configuration import PPOConfig
 import os
 
-TENSORBOARD_BASE_DIR = "runs_tensorboard"
-CHECKPOINT_BASE_DIR = "checkpoints_tensorboard"
+TENSORBOARD_BASE_DIR = "runs"
+CHECKPOINT_BASE_DIR = "checkpoints"
 
 class CheckpointManager:
     def __init__(self, agent: Agent, rl_config: PPOConfig):

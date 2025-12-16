@@ -55,6 +55,12 @@ class PygameViewer:
         self._screen = None
         self._clock = None
 
+    def tick(self) -> float:
+        if not self._initialized or self._clock is None or self.target_fps <= 0:
+            return 0.0
+        dt_ms = self._clock.tick(self.target_fps)
+        return float(dt_ms) / 1000.0
+
     def poll(self) -> ViewerInput:
         import pygame
 
@@ -79,7 +85,7 @@ class PygameViewer:
             self._paused = not self._paused
         return out
 
-    def show(self, frame_rgb: np.ndarray) -> float:
+    def show(self, frame_rgb: np.ndarray, *, tick: bool = True) -> float:
         if frame_rgb is None:
             return 0.0
         if not self._initialized:
@@ -96,7 +102,4 @@ class PygameViewer:
         self._screen.blit(surface, (0, 0))
         pygame.display.flip()
 
-        if self._clock is None or self.target_fps <= 0:
-            return 0.0
-        dt_ms = self._clock.tick(self.target_fps)
-        return float(dt_ms) / 1000.0
+        return self.tick() if tick else 0.0

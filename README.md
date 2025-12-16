@@ -22,30 +22,24 @@ Trains without rendering (fastest):
 python main.py
 ```
 
-Train while showing the game + a rolling value-function overlay:
+Train while showing the game + value-function overlay (real-time):
 
 ```bash
-python main.py --render --overlay
-```
-
-Tune rendering cost during training:
-
-```bash
-python main.py --render --overlay --render-every 4 --display-fps 60 --display-scale 1
+python main.py --show-value
 ```
 
 ### Eval
 
-Watch the agent play with the value overlay:
+Watch the agent play with the value overlay (real-time):
 
 ```bash
-python main.py --mode eval --render --overlay
+python main.py --mode eval --show-value
 ```
 
 Play manually in eval (Space/Up = flap):
 
 ```bash
-python main.py --mode eval --render --overlay --human-play
+python main.py --mode eval --show-value --human-play
 ```
 
 ## Viewer controls

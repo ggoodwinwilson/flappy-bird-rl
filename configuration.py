@@ -25,7 +25,7 @@ mlp_config = MLPConfig()
 @dataclass(frozen=True)
 class TransformerConfig:
     model_type = "xfmr"
-    d_model: int = 512
+    d_model: int = 32
     n_heads: int = 4
     num_layers: int = 4
     mlp_dim: int = d_model * 4
