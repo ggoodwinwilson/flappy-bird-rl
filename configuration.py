@@ -7,8 +7,8 @@ class MLPConfig:
     d_in: int = 180
     d_out_actor: int = 2
     d_out_critic: int = 1
-    d_model: int = 258
-    d_model_critic: int = 258
+    d_model: int = 256
+    d_model_critic: int = 256
     learning_rate: float = 3e-4
     num_epochs: int = 3
     batch_size: int = 32
@@ -25,7 +25,7 @@ mlp_config = MLPConfig()
 @dataclass(frozen=True)
 class TransformerConfig:
     model_type = "xfmr"
-    d_model: int = 32
+    d_model: int = 128
     n_heads: int = 4
     num_layers: int = 4
     mlp_dim: int = d_model * 4

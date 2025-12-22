@@ -11,10 +11,11 @@ from PIL import Image
 from pygame_viewer import PygameViewer
 from value_overlay import ValueOverlayConfig, ValueRewardOverlay
 import argparse
+import dataclasses
 
 # Constants and defaults
-# DEFAULT_MODEL_CONFIG = mlp_config
-DEFAULT_MODEL_CONFIG = transformer_config
+DEFAULT_MODEL_CONFIG = mlp_config
+# DEFAULT_MODEL_CONFIG = transformer_config
 RL_CONFIG = ppo_config
 ATTENTION_DEBUG_DIR = "debug_frames"
 ATTENTION_DEBUG_LIMIT = 0  # Set to >0 to enable attention visualization in eval
@@ -30,7 +31,52 @@ def parse_args():
         help="Show gameplay with a rolling value-function overlay (default: off).",
     )
     parser.add_argument("--human-play", action="store_true", help="In eval, control the bird yourself (Space/Up flap).")
+    parser.add_argument(
+        "--model",
+        choices=["mlp", "transformer", "xfmr"],
+        default=None,
+        help="Override model type (default: uses DEFAULT_MODEL_CONFIG).",
+    )
+    parser.add_argument(
+        "--d_model",
+        type=int,
+        default=None,
+        help="Override model dimension (MLP: hidden size; Transformer: embedding size).",
+    )
+    parser.add_argument(
+        "--d_model_critic",
+        type=int,
+        default=None,
+        help="(MLP only) Override critic hidden size (default: matches --d_model when provided).",
+    )
+    parser.add_argument(
+        "--mlp_dim",
+        type=int,
+        default=None,
+        help="(Transformer only) Override feedforward size (default: 4 * d_model when --d_model is provided).",
+    )
     return parser.parse_args()
+
+def build_model_config(args):
+    model_name = args.model
+    if model_name is None:
+        base = DEFAULT_MODEL_CONFIG
+        model_name = "transformer" if getattr(base, "model_type", None) == "xfmr" else "mlp"
+    else:
+        model_name = "transformer" if model_name in ("transformer", "xfmr") else "mlp"
+        base = transformer_config if model_name == "transformer" else mlp_config
+
+    if args.d_model is None and args.d_model_critic is None and args.mlp_dim is None:
+        return base
+
+    if model_name == "transformer":
+        d_model = args.d_model if args.d_model is not None else base.d_model
+        mlp_dim = args.mlp_dim if args.mlp_dim is not None else (d_model * 4 if args.d_model is not None else base.mlp_dim)
+        return dataclasses.replace(base, d_model=d_model, mlp_dim=mlp_dim)
+
+    d_model_actor = args.d_model if args.d_model is not None else base.d_model
+    d_model_critic = args.d_model_critic if args.d_model_critic is not None else (d_model_actor if args.d_model is not None else base.d_model_critic)
+    return dataclasses.replace(base, d_model=d_model_actor, d_model_critic=d_model_critic)
 
 def setup_env(render_mode=None):
     if render_mode is None:
@@ -124,8 +170,12 @@ def train_loop(env, agent, memory, writer, ckpt, model_config, rl_config, args, 
     obs_buffer = init_obs_buffer(model_config.seq_len, dtype=agent.dtype)
     obs_t1, _ = env.reset()
     obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
-    rewards_fifo = deque(maxlen=10000)
-    scores_queue = deque(maxlen=10000)
+    if not isinstance(ckpt.rewards_fifo, deque):
+        ckpt.rewards_fifo = deque(ckpt.rewards_fifo, maxlen=10000)
+    if not isinstance(ckpt.scores_queue, deque):
+        ckpt.scores_queue = deque(ckpt.scores_queue, maxlen=10000)
+    rewards_fifo = ckpt.rewards_fifo
+    scores_queue = ckpt.scores_queue
     env_step_count = 0
 
     if viewer is not None:
@@ -174,7 +224,9 @@ def train_loop(env, agent, memory, writer, ckpt, model_config, rl_config, args, 
 
                 if terminated or truncated:
                     if terminated:
-                        scores_queue.append(info.get("score", 0))
+                        score = info.get("score", 0)
+                        scores_queue.append(score)
+                        ckpt.last_score = score
                     obs_t1, _ = env.reset()
                     obs_t1 = torch.as_tensor(obs_t1, dtype=agent.dtype)
                     obs_buffer = init_obs_buffer(model_config.seq_len, dtype=agent.dtype)
@@ -199,6 +251,7 @@ def train_loop(env, agent, memory, writer, ckpt, model_config, rl_config, args, 
                 ckpt.save(paths["checkpoint_recent"])
             writer.add_scalar("Total 1000 Step Reward", last_1k_rew, global_step=ckpt.training_step)
             writer.add_scalar("Max High Score", ckpt.max_high_score, global_step=ckpt.training_step)
+            writer.add_scalar("Last Score", ckpt.last_score, global_step=ckpt.training_step)
             if scores_queue:
                 writer.add_scalar("Mean Score", sum(scores_queue) / len(scores_queue), global_step=ckpt.training_step)
             print(f"Step {ckpt.training_step}: Value {value_t:.2f}, Reward {reward_t:.2f}, Done {done_t}, Action {action_t}, Log prob {log_prob_t:.2f}, Info {info}, Last 1k Rew {last_1k_rew:.2f}")
@@ -211,7 +264,7 @@ def train_loop(env, agent, memory, writer, ckpt, model_config, rl_config, args, 
 if __name__ == '__main__':
     args = parse_args()
     run_mode = args.mode
-    model_config = DEFAULT_MODEL_CONFIG
+    model_config = build_model_config(args)
     render_mode = "rgb_array" if args.show_value else None
     env = setup_env(render_mode=render_mode)
     agent = Agent(RL_CONFIG, model_config)
@@ -225,8 +278,6 @@ if __name__ == '__main__':
     if os.path.exists(paths["checkpoint_recent"]):
         ckpt.load(paths["checkpoint_recent"], map_location=agent.device)
     agent.model.train() if run_mode == "train" else agent.model.eval()
-    ckpt.max_1k_rew = float('-inf')  # Reset if needed
-    ckpt.max_high_score = 0
 
     try:
         if run_mode == "eval":

@@ -6,6 +6,7 @@ import dataclasses
 from typing import Optional, Dict, Any
 from configuration import PPOConfig
 import os
+from collections import deque
 
 TENSORBOARD_BASE_DIR = "runs"
 CHECKPOINT_BASE_DIR = "checkpoints"
@@ -22,16 +23,22 @@ class CheckpointManager:
         self.batch_idx = 0
         self.max_high_score = 0
         self.max_1k_rew = float("-inf")
+        self.last_score = 0
+        self.rewards_fifo = deque(maxlen=10000)
+        self.scores_queue = deque(maxlen=10000)
 
     # Helpers for scalar training state
     def _train_keys(self):
-        # Add new scalar fields here only
+        # Add new training state fields here only
         return [
             "epoch",
             "training_step",
             "batch_idx",
             "max_high_score",
             "max_1k_rew",
+            "last_score",
+            "rewards_fifo",
+            "scores_queue",
         ]
 
     def _get_train_state(self):
